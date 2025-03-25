@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: iacgenius
+Version: 0.1.0
+License-File: LICENSE
+Requires-Dist: click>=8.1.0
+Requires-Dist: streamlit>=1.28.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: toml>=0.10.2
+Dynamic: license-file
+Dynamic: requires-dist

@@ -56,13 +56,13 @@ iacgenius config get
 
 ```bash
 # Generate Terraform configuration for AWS EC2 instance
-iacgenius generate --type terraform --provider aws "Create an EC2 instance with t2.micro type"
+iacgenius generate --type terraform --provider aws --description "Create an EC2 instance with t2.micro type"
 
 # Create Kubernetes deployment manifest
-iacgenius generate --type kubernetes "Create a deployment with 3 replicas of nginx"
+iacgenius generate --type kubernetes --description "Create a deployment with 3 replicas of nginx"
 
 # Generate CloudFormation template for S3 bucket
-iacgenius generate --type cloudformation "Create an S3 bucket with versioning enabled"
+iacgenius generate --type cloudformation --description "Create an S3 bucket with versioning enabled"
 ```
 
 ### Web Interface

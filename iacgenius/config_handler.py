@@ -20,16 +20,27 @@ def get_fernet():
 
 def read_config():
     """Read config with environment variable support"""
-    config = {"defaults": {}, "presets": {}}
+    config = {
+        "defaults": {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "api_key": None
+        },
+        "presets": {}
+    }
     
     if CONFIG_FILE.exists():
         try:
             encrypted_data = CONFIG_FILE.read_bytes()
             fernet = get_fernet()
             decrypted_data = fernet.decrypt(encrypted_data)
-            config = toml.loads(decrypted_data.decode())
+            stored_config = toml.loads(decrypted_data.decode())
+            # Merge stored config with defaults
+            config["defaults"].update(stored_config.get("defaults", {}))
+            config["presets"].update(stored_config.get("presets", {}))
         except Exception as e:
-            raise ConfigError(f"Config read failed: {str(e)}")
+            # Log error but continue with defaults
+            print(f"Warning: Config read failed: {str(e)}")
 
     # Merge environment variables with proper precedence
     env_vars = {
@@ -39,10 +50,7 @@ def read_config():
     }
     
     # Environment variables override config file defaults
-    config["defaults"] = {
-        **config.get("defaults", {}),
-        **{k: v for k, v in env_vars.items() if v is not None}
-    }
+    config["defaults"].update({k: v for k, v in env_vars.items() if v is not None})
         
     return config
 
@@ -69,7 +77,7 @@ def update_defaults(**kwargs):
     
     # Validate provider/model combinations
     valid_models = {
-        "deepseek": ["deepseek-coder-33b-instruct", "deepseek-chat"],
+        "deepseek": ["deepseek-chat"],
         "openai": ["gpt-4-turbo", "gpt-3.5-turbo"]
     }
     

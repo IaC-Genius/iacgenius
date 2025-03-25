@@ -36,11 +36,14 @@ def read_config():
             decrypted_data = fernet.decrypt(encrypted_data)
             stored_config = toml.loads(decrypted_data.decode())
             # Merge stored config with defaults
-            config["defaults"].update(stored_config.get("defaults", {}))
-            config["presets"].update(stored_config.get("presets", {}))
+            if "defaults" in stored_config:
+                config["defaults"].update(stored_config["defaults"])
+            if "presets" in stored_config:
+                config["presets"].update(stored_config["presets"])
         except Exception as e:
             # Log error but continue with defaults
             print(f"Warning: Config read failed: {str(e)}")
+            # Do not return here, continue with environment variables
 
     # Merge environment variables with proper precedence
     env_vars = {

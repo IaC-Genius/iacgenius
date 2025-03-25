@@ -47,7 +47,11 @@ def get(key):
             value = get_default(key)
             click.echo(f"{key}: {value or 'Not set'}")
         else:
-            config = get_default(None)
+            config = get_default(None) or {
+                "provider": "deepseek",
+                "model": "deepseek-chat",
+                "api_key": None
+            }
             for k, v in config.items():
                 click.echo(f"{k}: {v}")
     except ConfigError as e:

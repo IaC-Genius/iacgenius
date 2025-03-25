@@ -34,7 +34,7 @@ git clone https://github.com/IaC-Genius/iacgenius.git
 cd iacgenius
 
 # Install the package
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Configuration

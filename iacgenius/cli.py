@@ -278,7 +278,16 @@ Please provide an updated version of the code that addresses this feedback.
 def run():
     """Run the Streamlit web interface"""
     import subprocess
-    subprocess.run(["streamlit", "run", "streamlit_app.py"])
+    try:
+        result = subprocess.run(
+            ["streamlit", "run", "streamlit_app.py"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        click.echo(result.stdout)
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Error running Streamlit: {e.stderr}", err=True)
 
 @cli.command()
 def help():

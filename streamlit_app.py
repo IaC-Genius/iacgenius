@@ -111,6 +111,13 @@ def validate_api_key(provider, api_key):
             "content-type": "application/json"
         }
         validation_url = "https://api.anthropic.com/v1/messages"
+    elif provider == "openrouter":
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://github.com/iacgenius/iacgenius",
+            "X-Title": "IacGenius"
+        }
+        validation_url = "https://openrouter.ai/api/v1/models"
     else:
         return False  # Unsupported provider for validation
 
@@ -146,7 +153,7 @@ def call_llm_api(provider, model, prompt, api_key, temperature=0.7, max_tokens=2
 
     config = load_config()
 
-    if provider in ["openai", "deepseek", "anthropic"]:
+    if provider in ["openai", "deepseek", "anthropic", "openrouter"]:
         if provider == "anthropic":
             # Get API key from environment if not provided
             api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -393,6 +400,24 @@ def main():
                     model = st.selectbox("Model", options=st.session_state.models, key="dynamic_model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
                     st.session_state.selected_model = model
                 st.success("API key validated successfully.")
+            
+            elif provider == "openrouter":
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "HTTP-Referer": "https://github.com/iacgenius/iacgenius",
+                    "X-Title": "IacGenius"
+                }
+                try:
+                    response = requests.get("https://openrouter.ai/api/v1/models", headers=headers)
+                    response.raise_for_status()
+                    models = [model['id'] for model in response.json()['data']]
+                    st.session_state.models = models
+                    if 'models' in st.session_state:
+                        model = st.selectbox("Model", options=st.session_state.models, key="dynamic_model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
+                        st.session_state.selected_model = model
+                    st.success("API key validated and models fetched successfully.")
+                except Exception as e:
+                    st.error(f"Error fetching OpenRouter models: {e}")
             
             else:
                 st.error("Unsupported provider for model fetching.")

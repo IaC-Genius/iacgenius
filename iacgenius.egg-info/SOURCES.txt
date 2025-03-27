@@ -1,5 +1,6 @@
 LICENSE
 README.md
+setup.cfg
 setup.py
 iacgenius/__init__.py
 iacgenius/cli.py

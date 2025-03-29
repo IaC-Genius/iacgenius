@@ -42,7 +42,7 @@ class DeepseekProvider(LLMProvider):
             response.raise_for_status()
             return True
         except Exception as e:
-            raise ConfigError(f"API key validation failed: {str(e)}") from e
+            raise ConfigError(f"API key validation failed: {str(e)}")
     
     def generate(self, prompt, model="deepseek-chat", temperature=0.2, max_tokens=2048):
         """Generate text using DeepSeek's API"""
@@ -189,81 +189,5 @@ class AnthropicProvider(LLMProvider):
             response = requests.post(f"{self.BASE_URL}/messages", json=payload, headers=headers, timeout=180)
             response.raise_for_status()
             return response.json()["content"][0]["text"]
-        except Exception as e:
-            raise ConfigError(f"Generation failed: {str(e)}")
-
-
-class OpenRouterProvider(LLMProvider):
-    """OpenRouter LLM provider"""
-    
-    BASE_URL = "https://openrouter.ai/api/v1"
-    
-    def __init__(self, api_key=None):
-        super().__init__(api_key)
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY") or self.config.get("defaults", {}).get("api_key")
-        if not self.api_key:
-            raise ConfigError("OpenRouter API key not configured")
-    
-    def validate_api_key(self):
-        # Ensure API key is properly formatted
-        if not self.api_key or not isinstance(self.api_key, str):
-            raise ConfigError("API key must be a non-empty string")
-            
-        if not self.api_key.startswith("sk-or-"):
-            raise ConfigError("OpenRouter API key must start with 'sk-or-'")
-            
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": "https://github.com/iacgenius/iacgenius",
-            "X-Title": "IacGenius (https://github.com/iacgenius/iacgenius)"
-        }
-        
-        try:
-            # Use models endpoint for validation
-            response = requests.get(
-                f"{self.BASE_URL}/models",
-                headers=headers,
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                return True
-                
-            error_msg = f"API validation failed (status {response.status_code})"
-            if response.text:
-                error_msg += f": {response.text}"
-            raise ConfigError(error_msg)
-                
-        except requests.exceptions.RequestException as e:
-            raise ConfigError(f"API key validation failed: {str(e)}") from e
-    
-    def generate(self, prompt, model="deepseek/deepseek-chat-v3-0324:free", temperature=0.2, max_tokens=2048):
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": "https://github.com/your-repo",
-            "X-Title": "IacGenius",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are an expert Infrastructure-as-Code engineer..."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        
-        try:
-            response = requests.post(f"{self.BASE_URL}/chat/completions", json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
             raise ConfigError(f"Generation failed: {str(e)}")

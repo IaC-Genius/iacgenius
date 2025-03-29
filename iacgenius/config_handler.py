@@ -79,18 +79,18 @@ def update_defaults(**kwargs):
         kwargs["api_key"] = fernet.encrypt(kwargs["api_key"].encode()).decode()
     
     # Validate provider/model combinations
-    from .llm_integration import get_available_providers, get_available_models
+    valid_models = {
+        "deepseek": ["deepseek-chat"],
+        "openai": ["gpt-4-turbo", "gpt-3.5-turbo"]
+    }
     
     if "provider" in kwargs:
         provider = kwargs["provider"]
-        available_providers = get_available_providers()
-        if provider not in available_providers:
+        if provider not in valid_models:
             raise ConfigError(f"Invalid provider: {provider}")
             
-        if "model" in kwargs:
-            available_models = get_available_models(provider)
-            if available_models and kwargs["model"] not in available_models:
-                raise ConfigError(f"Invalid model for {provider}: {kwargs['model']}")
+        if "model" in kwargs and kwargs["model"] not in valid_models[provider]:
+            raise ConfigError(f"Invalid model for {provider}: {kwargs['model']}")
     
     # Merge and save updates
     config["defaults"] = {**config.get("defaults", {}), **kwargs}

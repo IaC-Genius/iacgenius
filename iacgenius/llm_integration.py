@@ -1,15 +1,14 @@
 import os
 import requests
 from .config_handler import read_config, ConfigError
-from .llm_providers import DeepseekProvider, OpenAIProvider, AnthropicProvider, OpenRouterProvider
+from .llm_providers import DeepseekProvider, OpenAIProvider, AnthropicProvider
 
 def get_provider(provider_name, api_key=None):
     """Get the appropriate LLM provider based on name"""
     providers = {
         "deepseek": DeepseekProvider,
         "openai": OpenAIProvider,
-        "anthropic": AnthropicProvider,
-        "openrouter": OpenRouterProvider
+        "anthropic": AnthropicProvider
     }
     
     if provider_name not in providers:
@@ -37,19 +36,14 @@ def validate_api_key(provider_name, api_key):
 
 def get_available_providers():
     """Get a list of available LLM providers"""
-    return ["deepseek", "openai", "anthropic", "openrouter"]
+    return ["deepseek", "openai", "anthropic"]
 
 def get_available_models(provider_name):
     """Get a list of available models for the specified provider"""
     models = {
         "deepseek": ["deepseek-chat", "deepseek-reasoner"],
         "openai": ["gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o"],
-        "anthropic": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
-        "openrouter": [
-            "deepseek/deepseek-chat-v3-0324:free",
-            "openai/gpt-4-turbo",
-            "anthropic/claude-3-5-sonnet-latest"
-        ]
+        "anthropic": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"]
     }
     
     return models.get(provider_name, [])

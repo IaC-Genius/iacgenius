@@ -17,7 +17,7 @@ def config():
     pass
 
 @config.command()
-@click.option('--provider', help='Default LLM provider (deepseek/openai/anthropic/openrouter)')
+@click.option('--provider', help='Default LLM provider (deepseek/openai/anthropic)')
 @click.option('--model', help='Model name for the provider')
 @click.option('--api-key', prompt=True, hide_input=True, help='API key for the LLM provider (or set DEEPSEEK_API_KEY environment variable)')
 def set(provider, model, api_key):
@@ -321,7 +321,7 @@ Examples:
   iacgenius config set --provider openai --model gpt-4-turbo
 
 Environment Variables:
-  DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY
+  DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
   Set these to avoid entering API keys manually
 """
     click.echo(help_text)

@@ -53,7 +53,7 @@ sequenceDiagram
 - Configuration management commands
 - Web UI launch capability
 
-### 2. Core Engine (`core/`)
+### 2. Core Engine (`iacgenius/`)
 
 - `config_handler.py`: Manage user preferences and secrets
 - `generator.py`: Template rendering engine

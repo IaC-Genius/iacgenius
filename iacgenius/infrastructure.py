@@ -1,6 +1,6 @@
 import os
 import toml
-from typing import List, Dict, Any, Optional
+from typing import List, Optional # Ensure Dict and Any are removed
 
 # Default infrastructure types if not defined in config
 DEFAULT_INFRASTRUCTURE_TYPES = [
@@ -58,8 +58,9 @@ def get_language_for_code(infra_type: str) -> str:
     """Get the appropriate language for syntax highlighting based on infrastructure type"""
     return INFRASTRUCTURE_LANGUAGES.get(infra_type, "text")
 
-def create_prompt_template(infra_type: str, description: str, cloud_provider: str, 
-                          region: Optional[str] = None, tags: Optional[str] = None) -> str:
+def create_prompt_template(infra_type: str, description: str, cloud_provider: str,
+                          region: Optional[str] = None, tags: Optional[str] = None,
+                          target_versions: Optional[str] = None) -> str: # Added target_versions
     """Create a prompt template for infrastructure generation"""
     # Build cloud environment context
     cloud_context = f"Cloud Environment Context:\n- Provider: {cloud_provider}\n"
@@ -90,15 +91,21 @@ You are a specialized Infrastructure as Code expert focusing on {infra_type}. Yo
 - Provide parameter descriptions and valid value ranges
 - Implement proper resource naming conventions and tagging
 - Add error handling and input validation where applicable
+- **IMPORTANT: Include standard version constraints for the IaC tool and any providers used (e.g., `required_version` and `required_providers` block in Terraform).**
 
 3. Resource Configuration:
 - List all relevant configuration options for each resource
 - Highlight required vs optional parameters
 - Include recommended values and usage examples
 - Document dependencies between resources
-
-Provide the infrastructure code with detailed comments and proper formatting.
-Include a brief summary of security considerations and available configuration options.
 """
-    
+
+    # Define version_instructions *before* using it in the final prompt f-string
+    version_instructions = ""
+    if target_versions:
+        version_instructions = f"\n**Target Version Constraints:**\nPlease ensure the generated code is compatible with and explicitly specifies the following versions if applicable:\n{target_versions}\n"
+
+    # Append final instructions
+    prompt += f"\nProvide the infrastructure code with detailed comments and proper formatting.{version_instructions}\nInclude a brief summary of security considerations and available configuration options."
+
     return prompt

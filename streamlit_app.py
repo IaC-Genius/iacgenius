@@ -1,11 +1,28 @@
 import streamlit as st
-import os
+import os # Still needed for os.getenv
 import json
-import toml
-import requests
+# import toml # No longer needed directly here
+# import requests # No longer needed
 import base64
 import io
 import zipfile
+# import tempfile # No longer needed
+# import subprocess # No longer needed
+# Ensure json is imported (it was already, but good practice) - Removed redundant import
+
+# --- Removed direct checkov imports ---
+# from checkov.common.runners.runner_registry import RunnerRegistry
+# from checkov.runner_filter import RunnerFilter
+# from checkov.common.output.report import Report
+
+# Import from core package
+from iacgenius.config_handler import ConfigError # read_config no longer needed here
+# Import explain_iac_finding as well
+from iacgenius.generator import generate_infrastructure # Removed unused explain_iac_finding
+# Import the infrastructure module to access its functions
+from iacgenius import infrastructure
+# from iacgenius.infrastructure import get_infrastructure_types, get_language_for_code # Now accessed via infrastructure module
+from iacgenius.llm_integration import get_available_providers, get_available_models, validate_api_key # Use central functions
 
 # Set page configuration
 st.set_page_config(
@@ -23,764 +40,519 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
 if 'generated_code' not in st.session_state:
-    st.session_state.generated_code = {}
+    st.session_state.generated_code = {} # Store dict like {"type": "Terraform", "code": "..."}
 
 if 'generation_history' not in st.session_state:
-    st.session_state.generation_history = []
+    st.session_state.generation_history = [] # Store list of dicts like generated_code + description, provider, model
+if 'available_models' not in st.session_state:
+    st.session_state.available_models = [] # Initialize dynamically fetched models
+if 'env_api_key' not in st.session_state:
+    st.session_state.env_api_key = None # Store API key found in environment
+if 'api_key_validated' not in st.session_state:
+    st.session_state.api_key_validated = False # Track if key/creds are validated
+if 'api_key_info' not in st.session_state: # Initialize here as well
+    st.session_state.api_key_info = ""
 
-# Configuration handler
-def load_config():
-    """Load configuration from config.toml if it exists"""
-    config = {
-        "providers": {
-            "anthropic": {
-                "base_url": "https://api.anthropic.com/v1",
-                "models": [
-                    "claude-3-5-sonnet-latest",
-                    "claude-3-7-sonnet-latest", 
-                    "claude-3-5-haiku-latest"
-                ]
-            },
-            "openai": {
-                "base_url": "https://api.openai.com/v1",
-                "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o"]
-            },
-            "deepseek": {
-                "base_url": "https://api.deepseek.com/v1",
-                "models": ["deepseek-chat", "deepseek-reasoner"]
-            },
-            "bedrock": {
-                "base_url": "",
-                "models": ["anthropic.claude-v2", "amazon.titan-text-express-v1"]
-            },
-            "ollama": {
-                "base_url": "http://localhost:11434",
-                "models": ["llama2", "codellama"]
-            }
-        },
-        "infrastructure_types": [
-            "Terraform", 
-            "CloudFormation", 
-            "Kubernetes (Manifests)", 
-            "Helm Chart", 
-            "Docker", 
-            "CI/CD Pipeline", 
-            "OPA Policy",
-            "Azure Resource Manager (ARM)"
-        ],
-        "default_provider": "deepseek",
-        "default_model": "deepseek-reasoner"
-    }
-    
-    config_path = "config.toml"
-    if os.path.exists(config_path):
-        try:
-            user_config = toml.load(config_path)
-            # Merge user config with default config
-            for key, value in user_config.items():
-                if key in config and isinstance(config[key], dict) and isinstance(value, dict):
-                    config[key].update(value)
-                else:
-                    config[key] = value
-        except Exception as e:
-            st.error(f"Error loading configuration: {e}")
-    
-    return config
+# --- Removed Duplicated Functions ---
+# load_config() - Handled by backend or read_config if needed for UI defaults
+# validate_api_key() - Imported from llm_integration
+# call_llm_api() - Replaced by generate_infrastructure
+# generate_iac() - Replaced by generate_infrastructure
+# get_language_for_code() - Imported from infrastructure module
+# ------------------------------------
 
-# LLM Integration
-def validate_api_key(provider, api_key):
-    """Validate the API key for the given provider."""
-    if provider == "openai":
-        base_url = "https://api.openai.com/v1/models"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        validation_url = base_url
-    elif provider == "deepseek":
-        base_url = "https://api.deepseek.com/v1/models"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        validation_url = base_url
-    elif provider == "anthropic":
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        }
-        validation_url = "https://api.anthropic.com/v1/messages"
-    else:
-        return False  # Unsupported provider for validation
-
-    try:
-        if provider == "anthropic":
-            # Anthropic requires a POST request for validation
-            response = requests.post(
-                validation_url,
-                headers=headers,
-                json={"max_tokens": 1, "messages": []}
-            )
-            # 400 status is expected for empty request
-            return response.status_code == 400
-        else:
-            response = requests.get(validation_url, headers=headers)
-            response.raise_for_status()
-            return True
-    except Exception as e:
-        st.error(f"API key validation failed: {e}")
-        return False
-
-def call_llm_api(provider, model, prompt, api_key, temperature=0.7, max_tokens=2048, validate_key=False):
-    """Call the LLM API with the given parameters"""
-    # Try to get API key from environment if not provided
-    if provider == "deepseek":
-        # Prefer user-provided key, fallback to environment variable
-        api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-    
-    if not api_key and provider == "deepseek":
-        env_var = "DEEPSEEK_API_KEY"
-        st.error(f"API key is required. Please either enter it manually or set the {env_var} environment variable.")
-        return None
-
-    config = load_config()
-
-    if provider in ["openai", "deepseek", "anthropic"]:
-        if provider == "anthropic":
-            # Get API key from environment if not provided
-            api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                st.error("API key is required. Please either enter it manually or set the ANTHROPIC_API_KEY environment variable.")
-                return None
-
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            data = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "system": "You are IacGenius, a specialized Infrastructure as Code expert who begins by analyzing requirements and suggesting best practices. You focus on generating secure, production-ready infrastructure code with comprehensive documentation. For each resource, you provide detailed parameter descriptions, security implications, and configuration options. You explain your recommendations and highlight potential security considerations.",
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            endpoint = "/messages"
-        else:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "You are IacGenius..."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            endpoint = "/chat/completions"
-        
-        try:
-            base_url = config['providers'][provider]['base_url']
-            response = requests.post(
-                f"{base_url}{endpoint}",
-                headers=headers,
-                json=data
-            )
-            response.raise_for_status()
-            
-            if provider == "anthropic":
-                return response.json()["content"][0]["text"]
-            return response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            st.error(f"Error calling {provider.capitalize()} API: {e}. Please ensure your API key has the necessary permissions and the endpoint is correct.")
-            return None
-    
-    elif provider == "bedrock":
-        st.warning("Bedrock integration is not yet implemented")
-        return None
-    
-    elif provider == "ollama":
-        st.warning("Ollama integration is not yet implemented")
-        return None
-    
-    else:
-        st.error(f"Unknown provider: {provider}")
-        return None
-
-# Template Generation
-def generate_iac(infra_type, description, provider, model, api_key, temperature, max_tokens):
-    """Generate infrastructure as code based on the description"""
-    # Load configuration and validate if the infrastructure type is supported
-    config = load_config()
-    supported_types = config["infrastructure_types"]
-    if infra_type not in supported_types:
-        st.error(f"Sorry, {infra_type} is not currently supported. We only support the following infrastructure tools: {', '.join(supported_types)}")
-        return None
-
-    prompt_template = f"""
-Cloud Environment Context:
-- Provider: {st.session_state.provider}
-- Region: {st.session_state.region}
-- Resource Tags:\n{'\n'.join([f'- {tag.strip()}' for tag in st.session_state.tags.split('\n') if tag.strip()])}
-
-You are a specialized Infrastructure as Code expert focusing on {infra_type}. Your task is to generate secure and production-ready code following these guidelines:
-
-1. Analyze Requirements:
-- Infrastructure Description: {description}
-- Consider scalability, high availability, and disaster recovery requirements
-- Identify potential security implications and compliance needs
-
-2. Code Generation Guidelines:
-- Follow security best practices and compliance standards
-- Include comprehensive comments explaining each resource and its purpose
-- Document security considerations and potential risks
-- Provide parameter descriptions and valid value ranges
-- Implement proper resource naming conventions and tagging
-- Add error handling and input validation where applicable
-
-3. Resource Configuration:
-- List all relevant configuration options for each resource
-- Highlight required vs optional parameters
-- Include recommended values and usage examples
-- Document dependencies between resources
-
-Provide the infrastructure code with detailed comments and proper formatting.
-Include a brief summary of security considerations and available configuration options.
-"""
-    
-    response = call_llm_api(provider, model, prompt_template, api_key, temperature, max_tokens)
-    
-    if response:
-        # Extract code from the response (in case the LLM adds explanations)
-        code = response
-        
-        # Add to generation history
-        st.session_state.generation_history.append({
-            "infra_type": infra_type,
-            "description": description,
-            "code": code,
-            "provider": provider,
-            "model": model
-        })
-        
-        return code
-    
-    return None
-
-# Helper function for code highlighting
-def get_language_for_code(infra_type):
-    """Get the appropriate language for syntax highlighting based on infrastructure type"""
-    lexer_map = {
-        "Terraform": "terraform",
-        "CloudFormation": "yaml",
-        "Kubernetes (Manifests)": "yaml",
-        "Helm Chart": "yaml",
-        "Docker": "dockerfile",
-        "CI/CD Pipeline": "yaml",
-        "OPA Policy": "rego",
-        "Azure Resource Manager (ARM)": "json"
-    }
-    
-    return lexer_map.get(infra_type, "text")
-
-# Helper function to create a download link
+# Helper function to create a download link (Keep)
 def get_download_link(code, filename, label="Download Code"):
     """Generate a download link for the code"""
     b64 = base64.b64encode(code.encode()).decode()
     href = f'<a href="data:text/plain;base64,{b64}" download="{filename}" target="_blank">{label}</a>'
     return href
 
-# Helper function to create a zip file with multiple files
+# Helper function to create a zip file with multiple files (Keep)
 def get_zip_download_link(files, zip_filename="iac_files.zip", label="Download All Files"):
     """Generate a download link for multiple files as a zip"""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
         for filename, content in files.items():
             zip_file.writestr(filename, content)
-    
+
     b64 = base64.b64encode(zip_buffer.getvalue()).decode()
     href = f'<a href="data:application/zip;base64,{b64}" download="{zip_filename}" target="_blank">{label}</a>'
     return href
 
+# --- New Helper Function ---
+# Map provider names to expected environment variables
+PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "bedrock": "AWS_REGION", # Bedrock uses AWS credentials chain, check region as proxy
+    "ollama": None # Ollama doesn't use env vars for keys
+}
+
+def check_env_api_key():
+    """Checks for API key in environment based on selected provider."""
+    provider = st.session_state.provider_selectbox # Get current provider
+    env_var = PROVIDER_ENV_VARS.get(provider)
+    api_key_input_widget = st.session_state.get("api_key_input", "") # Get current input value
+
+    if env_var:
+        env_key = os.getenv(env_var)
+        if env_key:
+            st.session_state.env_api_key = env_key # Store the actual key
+            # Don't overwrite manual input if user started typing
+            if not api_key_input_widget:
+                 st.session_state.api_key_info = f"API Key/Credentials found in environment variable ({env_var})."
+                 # Set input to placeholder only if empty
+                 # Streamlit doesn't easily allow changing input value directly after render,
+                 # so we rely on the info message and internal state `env_api_key`.
+                 # Consider adding a visual cue or placeholder text if possible in future Streamlit versions.
+            else:
+                 # User typed something, keep their input but still store env key internally
+                 st.session_state.api_key_info = f"Manual input detected. Using it instead of environment variable ({env_var})."
+
+            # Reset validation status on provider change if env key found
+            st.session_state.api_key_validated = False
+            st.session_state.available_models = []
+            return # Found env key
+
+    # If no env var for provider OR env var not set
+    st.session_state.env_api_key = None
+    if provider not in ["bedrock", "ollama"]: # These don't strictly need a key in the input field
+         st.session_state.api_key_info = "Please enter your API key or set the corresponding environment variable."
+    else:
+         st.session_state.api_key_info = f"{provider.capitalize()} uses credentials/local setup. Validation checks connectivity."
+    # Reset validation status and models on provider change (Corrected Indentation)
+    st.session_state.api_key_validated = False
+    st.session_state.available_models = []
+
+
+# --- End New Helper Function ---
+
 # Main application
 def main():
+    # Example usage of zip download link if needed later:
+    # zip_href = get_zip_download_link({"file1.txt": "content1", "file2.py": "print('hello')"})
+    # st.markdown(zip_href, unsafe_allow_html=True)
+
     st.title("🏗️ IacGenius Web")
     st.subheader("AI-powered Infrastructure-as-Code Generator")
-    
-    config = load_config()
-    
+
+    # Get available providers from the backend
+    available_providers = get_available_providers()
+    # Determine default provider
+    default_provider = available_providers[0] if available_providers else None
+
     # Sidebar for provider configuration
     with st.sidebar:
         st.header("Provider Configuration")
-        
-        provider = st.selectbox(
-            "LLM Provider",
-            options=list(config["providers"].keys()),
-            index=list(config["providers"].keys()).index(config["default_provider"]) if config["default_provider"] in config["providers"] else 0,
-            key="provider_selectbox"
-        )
-        
-        # Display models for the selected provider
-        models = config["providers"][provider]["models"]
-        model = st.selectbox("Model", options=models, key="model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
-        new_model = st.text_input("Add New Model (if any)", value=st.session_state.selected_model if 'selected_model' in st.session_state else "", placeholder="Enter model name")
-        add_model_button = st.button("Add Model")
-        
-        api_key = st.text_input(f"API Key (Optional if {provider.upper()}_API_KEY environment variable is set)", type="password", key="api_key_input")
-        validate_button = st.button("Validate API Key")
-        
-        st.divider()
-        
-        st.header("Generation Parameters")
-        temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.0, step=0.1,
-                              help="Higher values make output more random, lower values more deterministic")
-        max_tokens = st.slider("Max Tokens", min_value=500, max_value=4000, value=2048, step=100,
-                             help="Maximum length of generated response")
-    
-    # Validate API Key and fetch models
-    if validate_button:
-        if validate_api_key(provider, api_key):
-            # Fetch models from the provider's API
-            if provider == "openai":
-                base_url = "https://api.openai.com/v1/models"
-                
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                try:
-                    response = requests.get(base_url, headers=headers)
-                    response.raise_for_status()
-                    models = [model['id'] for model in response.json()['data']]
-                    st.session_state.models = models
-                    if 'models' in st.session_state:
-                        model = st.selectbox("Model", options=st.session_state.models, key="dynamic_model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
-                        st.session_state.selected_model = model
-                    st.success("API key validated and models fetched successfully.")
-                except Exception as e:
-                    st.error(f"Error fetching models: {e}. Please ensure your API key has the necessary permissions and the endpoint is correct.")
-            
-            elif provider == "deepseek":
-                base_url = "https://api.deepseek.com/v1/models"
-                
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                try:
-                    response = requests.get(base_url, headers=headers)
-                    response.raise_for_status()
-                    models = [model['id'] for model in response.json()['data']]
-                    st.session_state.models = models
-                    if 'models' in st.session_state:
-                        model = st.selectbox("Model", options=st.session_state.models, key="dynamic_model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
-                        st.session_state.selected_model = model
-                    st.success("API key validated and models fetched successfully.")
-                except Exception as e:
-                    st.error(f"Error fetching models: {e}. Please ensure your API key has the necessary permissions and the endpoint is correct.")
-            
-            elif provider == "anthropic":
-                # Use models from config since Anthropic doesn't have models endpoint
-                models = config['providers'][provider]['models']
-                st.session_state.models = models
-                if 'models' in st.session_state:
-                    model = st.selectbox("Model", options=st.session_state.models, key="dynamic_model_selectbox", on_change=lambda: st.session_state.update({"selected_model": model}))
-                    st.session_state.selected_model = model
-                st.success("API key validated successfully.")
-            
-            else:
-                st.error("Unsupported provider for model fetching.")
-        else:
-            st.error("Invalid API key. Please enter a valid key.")
 
-    # Add new model to the provider's model list
-    if add_model_button and new_model:
-        if new_model not in config["providers"][provider]["models"]:
-            config["providers"][provider]["models"].append(new_model)
-            st.success(f"Model '{new_model}' added successfully.")
-        else:
-            st.warning(f"Model '{new_model}' already exists in the list.")
-    
+        # Provider selection triggers environment check
+        selected_provider = st.selectbox(
+            "LLM Provider",
+            options=available_providers,
+            index=available_providers.index(default_provider) if default_provider in available_providers else 0,
+            key="provider_selectbox",
+            on_change=check_env_api_key # Call helper on change
+        )
+
+        # Trigger initial check if state is empty (first run)
+        if not st.session_state.api_key_info:
+             check_env_api_key()
+
+        # API Key input - Allow manual override
+        # Display info message based on env check
+        st.info(st.session_state.api_key_info)
+        api_key_input = st.text_input(
+             "API Key (Overrides ENV VAR if entered)",
+             type="password",
+             key="api_key_input",
+             # placeholder="Detected in ENV" if st.session_state.env_api_key else "Enter API Key" # Placeholder tricky
+        )
+
+        # Determine the key to use for validation/generation
+        # Priority: Manual Input > Environment Variable > None
+        key_to_use = api_key_input if api_key_input else st.session_state.env_api_key
+
+        # --- Updated Validation and Model Fetching ---
+        if st.button("Validate & Fetch Models"):
+            st.session_state.available_models = [] # Clear previous models
+            st.session_state.api_key_validated = False # Reset validation status
+
+            # For Bedrock/Ollama, validation checks connectivity/setup, not a specific key input
+            if selected_provider in ["ollama", "bedrock"]:
+                st.info(f"Validating {selected_provider} connectivity/credentials...")
+                try:
+                    is_valid = validate_api_key(selected_provider, None) # Pass None, validation uses internal checks
+                    if is_valid:
+                        st.success(f"{selected_provider.capitalize()} connection/credentials appear valid.")
+                        # Fetch models immediately after successful validation
+                        with st.spinner("Fetching available models..."):
+                             models = get_available_models(selected_provider, None) # Pass None for key
+                             # st.write(f"Debug: get_available_models returned: {models}") # Removed DEBUGGING
+                             if models:
+                                  st.session_state.available_models = models
+                                  st.session_state.api_key_validated = True # Set validated flag ONLY if models are fetched
+                                  st.success(f"Fetched {len(models)} models for {selected_provider}.")
+                             else:
+                                  # More specific warning if fetching returned empty list after validation
+                                  st.error(f"Validation succeeded, but failed to fetch models for {selected_provider}. Check terminal logs for details.")
+                                  st.session_state.available_models = [] # Ensure it's empty
+                                  # Optionally fallback to static list here if desired
+                    else:
+                        # Should be caught by exception below, but handle just in case
+                        st.error(f"{selected_provider.capitalize()} validation failed.")
+                except ConfigError as e:
+                    st.error(f"Validation Error: {e}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred during validation: {e}")
+
+            # For providers requiring a key
+            elif not key_to_use:
+                st.warning(f"Please enter an API key or set the {PROVIDER_ENV_VARS.get(selected_provider, 'appropriate')} environment variable.")
+            else:
+                st.info(f"Validating API Key for {selected_provider}...")
+                try:
+                    is_valid = validate_api_key(selected_provider, key_to_use)
+                    if is_valid:
+                        st.success(f"API Key for {selected_provider} appears valid.")
+                        # Fetch models immediately after successful validation
+                        with st.spinner("Fetching available models..."):
+                             models = get_available_models(selected_provider, key_to_use)
+                             # st.write(f"Debug: get_available_models returned: {models}") # Removed DEBUGGING
+                             if models:
+                                  st.session_state.available_models = models
+                                  st.session_state.api_key_validated = True # Set validated flag ONLY if models are fetched
+                                  st.success(f"Fetched {len(models)} models for {selected_provider}.")
+                             else:
+                                  # More specific warning if fetching returned empty list after validation
+                                  st.error(f"Validation succeeded, but failed to fetch models for {selected_provider}. Check terminal logs for details.")
+                                  st.session_state.available_models = [] # Ensure it's empty
+                                  # Optionally fallback to static list here if desired
+                    else:
+                        # Should be caught by exception below
+                        st.error(f"API Key validation failed for {selected_provider}.")
+                except ConfigError as e:
+                    st.error(f"Validation Error: {e}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred during validation: {e}")
+            st.rerun() # Re-add rerun to update the UI after state changes
+
+        # Model selection - Use dynamically fetched list from session state
+        # Disable if key not validated or no models fetched
+        model_options = st.session_state.available_models
+        model_select_disabled = not st.session_state.api_key_validated or not model_options
+
+        selected_model = st.selectbox(
+            "Model",
+            options=model_options,
+            index=0 if model_options else 0, # Default to first if available
+            key="model_selectbox",
+            disabled=model_select_disabled,
+            help="Validate API Key / Credentials first to fetch and enable models." if model_select_disabled else "Select the model to use."
+        )
+
+        st.divider()
+
+        st.header("Generation Parameters")
+        temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.1, # Defaulted to 0.2 like backend
+                              help="Higher values make output more random, lower values more deterministic")
+        max_tokens = st.slider("Max Tokens", min_value=500, max_value=4096, value=2048, step=128, # Increased max slightly
+                             help="Maximum length of generated response")
+        target_versions_input = st.text_input(
+            "Target IaC Version(s) (Optional)",
+            placeholder="e.g., Terraform AWS Provider ~> 5.0",
+            help="Specify desired versions for IaC tools or providers."
+        )
+
     # Main content area with tabs
-    tab1, tab2 = st.tabs(["Generate", "Chat"])
-    
-    # Generate tab
-    with tab1:
+    tab_generate, tab_load, tab_chat = st.tabs(["Generate New Code", "Load Existing Code", "Chat"])
+
+    # --- Load Existing Code Tab ---
+    with tab_load:
+        st.header("Load Your Existing Infrastructure Code")
+        st.info("Paste your existing IaC code below, select its type, and click 'Load Code' to start modifying or analyzing it.")
+
+        # Use backend function to get types
+        available_infra_types_load = infrastructure.get_infrastructure_types()
+        selected_infra_type_load = st.selectbox(
+            "Select Infrastructure Type",
+            options=available_infra_types_load,
+            key="load_infra_type"
+        )
+
+        existing_code_input = st.text_area(
+            "Paste your code here",
+            height=400,
+            key="load_code_area"
+        )
+
+        if st.button("Load Code & Validate", key="load_code_button"):
+            if not existing_code_input:
+                st.warning("Please paste your code into the text area.")
+            elif not selected_infra_type_load:
+                 st.warning("Please select the type of infrastructure code.")
+            else:
+                # Basic validation passed (not empty)
+                st.session_state.generated_code = {
+                    "type": selected_infra_type_load,
+                    "code": existing_code_input,
+                    "params": { # Add placeholder params for consistency
+                        "description": "Loaded existing code",
+                        "iac_type": selected_infra_type_load,
+                        "cloud_provider": "Unknown", # Cannot know from pasted code
+                        "llm_provider": selected_provider, # Use current sidebar selection
+                        "model": selected_model,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "region": None,
+                        "tags": None
+                    }
+                }
+                # Add to history
+                st.session_state.generation_history.append({
+                    "infra_type": selected_infra_type_load,
+                    "description": "Loaded existing code",
+                    "code": existing_code_input,
+                    "provider": "User", # Indicate it came from user input
+                    "model": "N/A"
+                })
+                st.success(f"{selected_infra_type_load} code loaded successfully! You can now view and modify it in the 'Generate New Code' tab.")
+                # Consider switching tabs automatically? Streamlit doesn't directly support this easily.
+                # User needs to manually switch back to the Generate tab.
+
+    # --- Generate New Code Tab (Previously tab1) ---
+    with tab_generate:
         st.header("Generate Infrastructure Code")
-        
+
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
-            # Cloud configuration presets
+            # Cloud configuration presets (Keep UI, but data is passed to backend)
             with st.expander("🌩️ Cloud Configuration Presets", expanded=True):
                 col_preset1, col_preset2 = st.columns(2)
                 with col_preset1:
-                    # Cloud provider selection with common presets and custom entry
-                    cloud_providers = [
-                        "AWS", 
-                        "Azure", 
-                        "Google Cloud", 
-                        "Oracle Cloud",
-                        "DigitalOcean",
-                        "OpenStack"
-                    ]
-                    
-                    selected_provider = st.selectbox(
-                        "Cloud Provider",
-                        options=cloud_providers + ["Other..."],
-                        index=None,
-                        key="provider_select",
-                        help="Select from common providers or choose 'Other...' for custom input"
+                    cloud_providers_presets = ["AWS", "Azure", "Google Cloud", "Oracle Cloud", "DigitalOcean", "OpenStack", "Generic"]
+                    selected_cloud_provider_ui = st.selectbox(
+                        "Cloud Provider", options=cloud_providers_presets + ["Other..."], index=0, key="cloud_provider_select"
                     )
-                    
-                    custom_provider = ""
-                    if selected_provider == "Other...":
-                        custom_provider = st.text_input(
-                            "Enter Custom Cloud Provider",
-                            key="custom_provider_input",
-                            placeholder="e.g. IBM Cloud, Alibaba Cloud, VMware",
-                            help="Enter any cloud provider not listed in the presets"
-                        )
-                        if custom_provider:
-                            st.session_state.provider = custom_provider
-                        else:
-                            st.warning("Please enter a cloud provider name or select from the presets")
-                    else:
-                        st.session_state.provider = selected_provider
-                    st.session_state.region = st.text_input(
-                        "Default Region", 
-                        value="us-east-1",
-                        help="AWS format: us-east-1, Azure format: eastus"
-                    )
-                with col_preset2:    
-                    st.session_state.tags = st.text_area(
-                        "Resource Tags (key=value)", 
-                        height=68,
-                        help="One tag per line in key=value format\nExample:\nenv=prod\nteam=infra",
-                        placeholder="env=prod\nowner=team-infra"
-                    )
+                    custom_cloud_provider = ""
+                    if selected_cloud_provider_ui == "Other...":
+                        custom_cloud_provider = st.text_input("Enter Custom Cloud Provider", key="custom_cloud_provider_input")
+                    # Determine final cloud provider to pass to backend
+                    final_cloud_provider = custom_cloud_provider if selected_cloud_provider_ui == "Other..." and custom_cloud_provider else selected_cloud_provider_ui
+
+                    region = st.text_input("Default Region", value="us-east-1", help="e.g., us-east-1, eastus")
+                with col_preset2:
+                    tags = st.text_area("Resource Tags (key=value)", height=68, help="One tag per line", placeholder="env=prod\nowner=team-infra")
 
             # Infrastructure type and description
-            infra_type = st.selectbox(
-                "Infrastructure Type",
-                options=config["infrastructure_types"]
-            )
-            
-            description = st.text_area(
-                "Describe your infrastructure needs",
-                height=200,
-                placeholder="Example: Create an AWS infrastructure with a VPC, two public subnets, and an EC2 instance running a web server."
-            )
-            
+            # Use backend function to get types
+            available_infra_types = infrastructure.get_infrastructure_types() # Use module access
+            infra_type = st.selectbox("Infrastructure Type", options=available_infra_types)
+
+            description = st.text_area("Describe your infrastructure needs", height=200, placeholder="Example: Create an AWS VPC with two public subnets...")
+
             col_gen, col_mod = st.columns([1, 1])
             with col_gen:
-                generate_button = st.button("Generate Code")
+                # Disable button if model selection is disabled (i.e., key not validated or no models)
+                generate_button = st.button("Generate Code", disabled=model_select_disabled)
             with col_mod:
-                modify_input = st.text_area("Modification Request", key="mod_input", placeholder="Enter your modification request here...", label_visibility="collapsed")
-                modify_button = st.button("Modify Code", disabled=not st.session_state.generated_code)
-            
+                # Modification logic needs rework to use generate_infrastructure
+                modify_input = st.text_area("Modification Request", key="mod_input", placeholder="Enter modification request...", label_visibility="collapsed")
+                # Disable button if model selection is disabled OR no code generated yet
+                modify_button = st.button("Modify Code", disabled=model_select_disabled or not st.session_state.generated_code)
+
+            # --- Refactored Generation Logic ---
+            if generate_button and description:
+                # Check for model selection *before* trying to generate (Corrected logic placement)
+                if not selected_model or model_select_disabled:
+                     st.warning("Please validate credentials/API key and select a model first.")
+                else:
+                    with st.spinner("Generating code..."):
+                        try:
+                            # Call the central generator function
+                            result_json_str = generate_infrastructure(
+                                description=description,
+                                iac_type=infra_type,
+                                cloud_provider=final_cloud_provider,
+                                llm_provider=selected_provider, # From sidebar
+                                model=selected_model,           # From sidebar (now dynamic)
+                                api_key=key_to_use,             # Use determined key (input or env)
+                                temperature=temperature,        # From sidebar
+                                max_tokens=max_tokens,          # From sidebar
+                                region=region if region else None, # From main area
+                                tags=tags if tags else None,        # From main area
+                                target_versions=target_versions_input if target_versions_input else None # Pass target versions
+                            )
+                            result_data = json.loads(result_json_str)
+                            generated_code_text = result_data.get("code", "")
+
+                            if generated_code_text:
+                                st.session_state.generated_code = {
+                                    "type": infra_type,
+                                    "code": generated_code_text,
+                                    # Store params used for potential modification later
+                                    "params": {
+                                        "description": description, # Original description
+                                        "iac_type": infra_type,
+                                        "cloud_provider": final_cloud_provider,
+                                        "llm_provider": selected_provider,
+                                        "model": selected_model,
+                                        "temperature": temperature,
+                                        "max_tokens": max_tokens,
+                                        "region": region,
+                                        "tags": tags
+                                    }
+                                }
+                                st.success("Code generated successfully!")
+                                # Add to history
+                                st.session_state.generation_history.append({
+                                    "infra_type": infra_type,
+                                    "description": description,
+                                    "code": generated_code_text,
+                                    "provider": selected_provider,
+                                    "model": selected_model
+                                })
+                            else:
+                                st.error("Generation succeeded but no code was returned.")
+
+                        except ConfigError as e:
+                             st.error(f"Configuration Error: {e}")
+                        except Exception as e:
+                             st.error(f"Generation failed: {e}")
+
+            # --- Refactored Modification Logic ---
             if modify_button and modify_input and st.session_state.generated_code:
-                with st.spinner("Modifying code..."):
-                    code_type = st.session_state.generated_code["type"]
-                    code = st.session_state.generated_code["code"]
-                    language = get_language_for_code(code_type)
-                    
-                    # Create a prompt for code modification
-                    modification_prompt = f"""
-                    Current infrastructure type: {code_type}
-                    Existing code:
-                    `{language}
-                    {code}
-                    `
-                    Modification request: {modify_input}
-                    
-                    Please provide the complete modified code following these guidelines:
-                    1. Maintain the same code structure and style
-                    2. Include all necessary security measures
-                    3. Provide the full code, not just the changes
-                    4. Use proper formatting and comments
-                    """
-                    
-                    # Generate modified code
-                    modified_code = call_llm_api(
-                        provider,
-                        model,
-                        modification_prompt,
-                        api_key,
-                        temperature,
-                        max_tokens
-                    )
-                    
-                    if modified_code:
-                        # Extract code from response if it's wrapped in markdown code blocks
-                        if "`" in modified_code:
-                            code_start = modified_code.find("`") + 3
-                            code_end = modified_code.rfind("`")
-                            if code_start < code_end:
-                                code_lines = modified_code[code_start:code_end].split('\n')
-                                if len(code_lines) > 0 and not code_lines[0].strip().isalnum():
-                                    code_lines = code_lines[1:]
-                                modified_code = '\n'.join(code_lines)
-                        
-                        # Update the generated code
-                        st.session_state.generated_code["code"] = modified_code
-                        
-                        # Add to generation history
-                        st.session_state.generation_history.append({
-                            "infra_type": code_type,
-                            "description": f"Modified: {modify_input}",
-                            "code": modified_code,
-                            "provider": provider,
-                            "model": model
-                        })
-                        
-                        st.success("Code modified successfully!")
-                    else:
-                        st.error("Failed to modify code. Please check your API key and try again.")
-            
-            elif generate_button and description:
-                with st.spinner("Generating code..."):
-                    generated_code = generate_iac(
-                        infra_type,
-                        description,
-                        provider,
-                        model,
-                        api_key,
-                        temperature,
-                        max_tokens
-                    )
-                    
-                    if generated_code:
-                        st.session_state.generated_code = {
-                            "type": infra_type,
-                            "code": generated_code
-                        }
-                        st.success("Code generated successfully!")
-                    else:
-                        st.error("Failed to generate code. Please check your API key and try again.")
-        
+                 # Check for model selection *before* trying to modify (Corrected logic placement)
+                 if not selected_model or model_select_disabled:
+                      st.warning("Please validate credentials/API key and select a model first.")
+                 else:
+                    with st.spinner("Modifying code..."):
+                        try:
+                            original_code = st.session_state.generated_code["code"]
+                            original_params = st.session_state.generated_code.get("params", {}) # Get params used previously
+
+                            # Construct a new description/prompt including the modification request
+                            modification_prompt = f"""
+Original Request: {original_params.get('description', 'N/A')}
+Previously Generated Code ({original_params.get('iac_type', 'N/A')} for {original_params.get('cloud_provider', 'N/A')}):
+```
+{original_code}
+```
+Modification Request: {modify_input}
+
+Please provide the complete, updated code incorporating the modification request, following the original format and best practices.
+"""
+                            # Call generator again with the new prompt and original parameters
+                            result_json_str = generate_infrastructure(
+                                description=modification_prompt, # Use the combined prompt
+                                iac_type=original_params.get('iac_type', infra_type), # Use original type
+                                cloud_provider=original_params.get('cloud_provider', final_cloud_provider),
+                                llm_provider=original_params.get('llm_provider', selected_provider),
+                                model=original_params.get('model', selected_model), # Use original model used
+                                api_key=key_to_use, # Use current determined key (input or env)
+                                temperature=original_params.get('temperature', temperature),
+                                max_tokens=original_params.get('max_tokens', max_tokens),
+                                region=original_params.get('region', region if region else None),
+                                tags=original_params.get('tags', tags if tags else None),
+                                target_versions=target_versions_input if target_versions_input else None # Pass target versions
+                            )
+                            result_data = json.loads(result_json_str)
+                            modified_code_text = result_data.get("code", "")
+
+                            if modified_code_text:
+                                # Update the main code display
+                                st.session_state.generated_code["code"] = modified_code_text
+                                # Update the params description to reflect modification
+                                st.session_state.generated_code["params"]["description"] = f"Original: {original_params.get('description', 'N/A')} | Modified: {modify_input}"
+                                st.success("Code modified successfully!")
+                                # Add modification to history
+                                st.session_state.generation_history.append({
+                                    "infra_type": original_params.get('iac_type', infra_type),
+                                    "description": f"Modified: {modify_input}",
+                                    "code": modified_code_text,
+                                    "provider": original_params.get('llm_provider', selected_provider),
+                                    "model": original_params.get('model', selected_model)
+                                })
+                            else:
+                                st.error("Modification succeeded but no code was returned.")
+
+                        except ConfigError as e:
+                             st.error(f"Configuration Error during modification: {e}")
+                        except Exception as e:
+                             st.error(f"Modification failed: {e}")
+
+
         with col2:
             st.subheader("Generation History")
-            
+            # History display logic remains largely the same
             if st.session_state.generation_history:
-                for i, item in enumerate(reversed(st.session_state.generation_history[-5:])):
+                for i, item in enumerate(reversed(st.session_state.generation_history[-5:])): # Show last 5
                     with st.expander(f"{item['infra_type']} - {item['description'][:30]}..."):
-                        st.text(f"Provider: {item['provider']} - {item['model']}")
-                        # Get appropriate language for syntax highlighting
-                        code_type = item['infra_type']
-                        lexer_map = {
-                            "Terraform": "terraform",
-                            "CloudFormation": "yaml",
-    "Kubernetes (Manifests)": "yaml",
-    "Helm Chart": "yaml",
-                            "Docker": "dockerfile",
-                            "CI/CD Pipeline": "yaml",
-                            "OPA Policy": "rego"
-                        }
-                        language = lexer_map.get(code_type, "text")
-                        
-                        # Display code with proper syntax highlighting
-                        # Show a preview in the history section
+                        st.text(f"Provider: {item.get('provider','N/A')} - {item.get('model','N/A')}")
+                        # Use the imported infrastructure module to call get_language_for_code
+                        language = infrastructure.get_language_for_code(item['infra_type']) # Use imported function via module
                         preview_code = item['code'][:200] + "..." if len(item['code']) > 200 else item['code']
-                        st.code(preview_code, language=language, line_numbers=True)
+                        st.code(preview_code, language=language) # Removed line numbers for preview
                         if st.button(f"Load This Code", key=f"load_{i}"):
+                            # Find the full history item to load params too if available
+                            full_history_item = next((h for h in st.session_state.generation_history if h['code'] == item['code'] and h['description'] == item['description']), None)
                             st.session_state.generated_code = {
                                 "type": item['infra_type'],
-                                "code": item['code']
+                                "code": item['code'],
+                                "params": full_history_item.get("params") if full_history_item else None # Load params if found
                             }
+                            st.rerun() # Rerun to update main display
             else:
-                st.info("No generation history yet. Generate some code to see it here.")
-        
-        # Display generated code
+                st.info("No generation history yet.")
+
+        # Display generated code (logic mostly unchanged, uses imported get_language_for_code)
         if st.session_state.generated_code:
             st.divider()
             st.subheader("Generated Code")
-            
+
             code_type = st.session_state.generated_code["type"]
             code = st.session_state.generated_code["code"]
-            
-            # Get appropriate language for syntax highlighting
-            language = get_language_for_code(code_type)
-            
-            # Use Streamlit's native code display with proper syntax highlighting
+            # Use the imported infrastructure module to call get_language_for_code
+            language = infrastructure.get_language_for_code(code_type) # Use imported function via module
+
             st.code(code, language=language, line_numbers=True)
-            
-            # Add a text input for the file name
-            file_name_input = st.text_input("Enter file name", value="code.txt")
 
-            # Determine the final file name
-            if not file_name_input:
-                final_file_name = "code.txt"
-            elif "." not in file_name_input:
-                final_file_name = f"{file_name_input}.txt"
-            else:
-                final_file_name = file_name_input
+            # File naming and download logic (moved get_file_extension call here)
+            # Use the imported infrastructure module to call get_file_extension
+            default_ext = infrastructure.get_file_extension(code_type) # Use backend function via module
+            default_filename = f"iacgenius_{code_type.lower().replace(' ', '_').replace('(', '').replace(')', '')}.{default_ext}"
 
-            # Add a download button for the generated code
-            if st.download_button(
-                label="Download",
-                data=code,
-                file_name=final_file_name,
-                mime="text/plain"
-            ):
-                st.success("File ready to be saved!")
+            file_name_input = st.text_input("Enter file name for download", value=default_filename)
+            final_file_name = file_name_input if file_name_input else default_filename
 
-            st.markdown("""
-<style>
-/* Target the actual code element inside st.code's block */
-div[data-testid="stCodeBlock"] pre,
-div[data-testid="stCodeBlock"] code {
-    white-space: pre-wrap !important;
-    word-wrap: break-word !important;
-    overflow-wrap: break-word !important;
-    overflow-x: hidden !important;
-}
-</style>
-            """, unsafe_allow_html=True)
-            
-            # Code actions
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                # Copy to clipboard button
-                st.button("Copy to Clipboard", on_click=lambda: st.write("<script>navigator.clipboard.writeText(" + code.replace("", "\\") + ");</script>", unsafe_allow_html=True))
-            
-            with col2:
-                # Download single file
-                file_extension_map = {
-                    "Terraform": "tf",
-                    "CloudFormation": "yaml",
-                    "Kubernetes": "yaml",
-                    "Docker": "Dockerfile",
-                    "CI/CD Pipeline": "yaml",
-                    "OPA Policy": "rego"
-                }
-                
-                file_extension = file_extension_map.get(code_type, "txt")
-                filename = f"iac_code.{file_extension}"
-                
-                st.markdown(get_download_link(code, filename), unsafe_allow_html=True)
-            
-            with col3:
-                # Placeholder for layout balance
-                st.empty()
-            
-            with col4:
-                # For future: Download as zip with multiple files
-                if code_type == "Terraform":
-                    # Example of splitting into multiple files for Terraform
-                    files = {
-                        "main.tf": code,
-                        "variables.tf": "# Variables will be defined here",
-                        "outputs.tf": "# Outputs will be defined here"
-                    }
-                    st.markdown(get_zip_download_link(files, "terraform_files.zip", "Download as Terraform Project"), unsafe_allow_html=True)
-    
-    # Chat tab
-    with tab2:
+            st.download_button(label="Download Code", data=code, file_name=final_file_name, mime="text/plain")
+
+            # --- Removed Validation/Scanning Section ---
+
+    # --- Chat Tab (Previously tab2) ---
+    with tab_chat:
         st.header("Chat with IacGenius")
-        
-        # Display chat history (most recent messages first)
-        # Create a container for chat history
-        chat_container = st.container()
-        
-        # Display the current code if available
-        if st.session_state.generated_code:
-            with chat_container.chat_message("assistant"):
-                code_type = st.session_state.generated_code["type"]
-                code = st.session_state.generated_code["code"]
-                language = get_language_for_code(code_type)
-                st.code(code, language=language, line_numbers=True)
-        
-        # Display chat history in reverse chronological order
+        st.warning("Chat functionality needs refactoring to use the updated backend.") # Placeholder
+
+        # --- Refactoring Needed for Chat ---
+        # 1. Display history (mostly ok)
+        # 2. Get response: Construct prompt including history AND current code context
+        # 3. Call generate_infrastructure with the chat prompt
+        # 4. Display response
+        # 5. Handle applying/discarding code changes suggested in chat
+        # --- End Refactoring Needed ---
+
+        # Placeholder display
         for message in reversed(st.session_state.chat_history):
-            with chat_container.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        # Add action buttons for code modifications
-        if st.session_state.chat_history and any(msg["role"] == "system" and "Existing code:" in msg["content"] for msg in st.session_state.chat_history):
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Apply Changes", key="apply_changes"):
-                    latest_response = next((msg["content"] for msg in reversed(st.session_state.chat_history) 
-                                          if msg["role"] == "assistant" and "`" in msg["content"]), None)
-                    if latest_response:
-                        code_start = latest_response.find("`") + 3
-                        code_end = latest_response.rfind("`")
-                        if code_start < code_end:
-                            code_lines = latest_response[code_start:code_end].split('\n')
-                            if len(code_lines) > 0 and not code_lines[0].strip().isalnum():
-                                code_lines = code_lines[1:]
-                            new_code = '\n'.join(code_lines)
-                            
-                            if new_code.strip():
-                                st.session_state.generated_code["code"] = new_code
-                                st.success("Changes applied successfully!")
-                                st.session_state.chat_history = []
-                                st.session_state.show_chat = False
-                                st.rerun()
-                        
-                        with col2:
-                            if st.button("Discard Changes", key="discard_changes"):
-                                st.session_state.chat_history = []
-                                st.session_state.show_chat = False
-                                st.rerun()
-        
-        # Chat input
-        user_input = st.chat_input("Ask a follow-up question or request modifications...")
-        
-        if user_input:
-            # Add user message to chat history
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            
-            # Display user message
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            
-            # Generate response
-            with st.spinner("Thinking..."):
-                # Construct prompt with chat history context
-                chat_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.chat_history])
-                
-                # Create a prompt for the follow-up question
-                chat_prompt = f"""
-                You are IacGenius, an expert in infrastructure as code. 
-                
-                Previous conversation:
-                {chat_context}
-                
-                Please respond to the latest question or request. If it's about modifying code:
-                1. Always provide the complete modified code
-                2. Use markdown code blocks with appropriate language tags
-                3. Explain the changes you made
-                4. Highlight any security implications
-                """
-                
-                # Call the LLM API
-                response = call_llm_api(
-                    provider,
-                    model,
-                    chat_prompt,
-                    api_key,
-                    temperature,
-                    max_tokens
-                )
-                
-                if response:
-                    # Add assistant response to chat history
-                    st.session_state.chat_history.append({"role": "assistant", "content": response})
-                    
-                    # Display assistant response
-                    with st.chat_message("assistant"):
-                        st.markdown(response)
-                else:
-                    st.error("Failed to generate a response. Please check your API key and try again.")
+             with st.chat_message(message["role"]):
+                  st.markdown(message["content"])
+
+        if st.chat_input("Ask a follow-up question or request modifications..."):
+             st.info("Chat response generation is temporarily disabled during refactoring.")
+
 
 # Run the main application
 if __name__ == "__main__":

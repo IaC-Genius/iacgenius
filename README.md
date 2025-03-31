@@ -5,7 +5,7 @@ IACGenius is an intelligent Infrastructure as Code (IaC) generator that leverage
 ## Features
 
 - 🖥️ **Dual Interface**: Choose between CLI and Web UI based on your preference
-- 🤖 **Multi-LLM Support**: Compatible with DeepSeek, OpenAI, and Anthropic
+- 🤖 **Multi-LLM Support**: Compatible with DeepSeek, OpenAI, Anthropic, OpenRouter, AWS Bedrock, and Ollama.
 - 🛠️ **Multiple IaC Formats**: Generate templates for:
   - Terraform
   - AWS CloudFormation
@@ -33,18 +33,32 @@ IACGenius is an intelligent Infrastructure as Code (IaC) generator that leverage
 git clone https://github.com/IaC-Genius/iacgenius.git
 cd iacgenius
 
-# Install the package
+# Create and activate a virtual environment (Recommended)
+python -m venv venv
+# On Windows:
+# .\venv\Scripts\activate
+# On macOS/Linux:
+# source venv/bin/activate
+
+# Install the package (editable mode)
 pip install -e .
 ```
 
 ### Configuration
 
 ```bash
-# Set your LLM provider API key
+# Set default provider (e.g., deepseek, openai, anthropic, openrouter, bedrock, ollama)
+iacgenius config set --provider deepseek
+
+# Set your LLM provider API key (if required by the provider)
+# This stores the key securely using your OS keyring.
 iacgenius config set --api-key YOUR_API_KEY
 
-# Set default provider (deepseek/openai/anthropic)
-iacgenius config set --provider deepseek
+# API Key Precedence:
+# 1. Provider-specific ENV VAR (e.g., OPENAI_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY) - Recommended
+# 2. Key set via `iacgenius config set --api-key`
+# 3. Generic ENV VAR `IACGENIUS_API_KEY` (Less specific, overrides config if set)
+# Note: AWS Bedrock uses the standard AWS credential chain (e.g., ~/.aws/credentials, IAM role). Ollama connects locally and typically requires no key.
 
 # Verify configuration
 iacgenius config get
@@ -53,6 +67,8 @@ iacgenius config get
 ## Usage
 
 ### Command Line Interface
+
+**Basic Generation (Flags):**
 
 ```bash
 # Generate Terraform configuration for AWS EC2 instance
@@ -63,6 +79,27 @@ iacgenius generate --type kubernetes --description "Create a deployment with 3 r
 
 # Generate CloudFormation template for S3 bucket
 iacgenius generate --type cloudformation --description "Create an S3 bucket with versioning enabled"
+```
+
+**Interactive Generation:**
+
+If you omit required flags like `--description` or `--type`, IACGenius will prompt you interactively.
+
+```bash
+# Start interactive generation
+iacgenius generate
+```
+
+After generation, you'll be prompted to modify the code, save it, or quit.
+
+**Getting Help:**
+
+Use `--help` for general help or help on specific commands.
+
+```bash
+iacgenius --help
+iacgenius generate --help
+iacgenius config --help
 ```
 
 ### Web Interface
@@ -83,8 +120,8 @@ iacgenius run
 ### Setup Development Environment
 
 ```bash
-# Install development dependencies
-pip install -r requirements.txt
+# Install development dependencies (includes core requirements)
+pip install -r requirements-dev.txt
 
 # Install pre-commit hooks
 pip install pre-commit
@@ -123,6 +160,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Security
 
-Please do not expose your API keys in the code or commit them to the repository. Use environment variables or secure secret management solutions.
+Please do not expose your API keys in the code or commit them to the repository. Use environment variables (see Configuration section for recommended variables) or the secure `iacgenius config set --api-key` command.
 
 Report security vulnerabilities to [raj@iacgenius.com](mailto:raj@iacgenius.com).

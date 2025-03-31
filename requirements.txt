@@ -1,12 +1,16 @@
-streamlit>=1.24.0
-python-dotenv>=1.0.0
-requests==2.31.0
-pygments>=2.15.0
-toml>=0.10.2
+# Core Application Dependencies (Pinned for reproducibility)
 click==8.1.7
-cryptography==42.0.5
+streamlit==1.37.0 # Patched version for CVE
+python-dotenv==1.0.0
+toml==0.10.2
 keyring==25.6.0
-openai>=1.12.0
-anthropic>=0.18.1
-typing-extensions>=4.9.0
-pydantic>=2.6.1
+cryptography==42.0.5
+requests==2.31.0
+pygments==2.15.1 # Patched version for ReDoS
+openai==1.12.0
+anthropic==0.18.1
+typing-extensions==4.9.0
+pydantic==2.6.1
+boto3==1.34.131 # Pinning boto3 - Check for latest compatible version if needed
+yamllint==1.33.0
+python-hcl2==4.3.0
